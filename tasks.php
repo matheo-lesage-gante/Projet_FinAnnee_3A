@@ -16,16 +16,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['ajax_update'])) {
     $allowedStatuses = ['à faire', 'en cours', 'terminé'];
     
     if ($taskId && in_array($newStatus, $allowedStatuses)) {
-        // Par défaut, on calcule selon le statut
         $progress = 0;
         if ($newStatus === 'terminé') {
             $progress = 100;
         } elseif ($newStatus === 'en cours') {
-            // Si un pourcentage personnalisé a été envoyé par le JavaScript, on l'utilise
             if (isset($_POST['progress'])) {
                 $progress = max(0, min(100, (int)$_POST['progress']));
             } else {
-                $progress = 50; // Valeur de secours
+                $progress = 50;
             }
         }
 
@@ -45,6 +43,38 @@ $stmt = $pdo->prepare("SELECT t.*, u.first_name FROM tasks t LEFT JOIN users u O
 $stmt->execute([$projectId]);
 $tasks = $stmt->fetchAll();
 
+// --- CALCUL DE L'AVANCEMENT PONDÉRÉ DU PROJET ---
+$totalWeights = 0;
+$weightedProgressSum = 0;
+$projectProgress = 0;
+
+// Table de correspondance des coefficients selon ta priorité
+$coefficients = [
+    'haute'   => 2.0,
+    'moyenne' => 1.5,
+    'basse'   => 1.0
+];
+
+foreach ($tasks as $t) {
+    // Nettoyage de la chaîne (minuscules et suppression des espaces superflus)
+    $priority = mb_strtolower(trim($t['priority'] ?? 'basse'));
+    
+    // Si la priorité en BDD ne correspond pas, on applique le coef "basse" (1) par défaut
+    $coef = $coefficients[$priority] ?? 1.0;
+    
+    $taskProgress = max(0, min(100, (int)($t['progress'] ?? 0)));
+    
+    // Cumul pour la formule de la moyenne pondérée
+    $weightedProgressSum += ($taskProgress * $coef);
+    $totalWeights += $coef;
+}
+
+// Évite la division par zéro si le projet n'a aucune tâche
+if ($totalWeights > 0) {
+    $projectProgress = round($weightedProgressSum / $totalWeights);
+}
+
+// --- Organisation des tâches pour l'affichage du Kanban ---
 $kanban = ['à faire' => [], 'en cours' => [], 'terminé' => []];
 foreach($tasks as $t) {
     $status = $t['status'] ?: 'à faire';
@@ -55,12 +85,27 @@ foreach($tasks as $t) {
 
 include 'includes/header.php';
 ?>
-<div class="flex-between">
-    <h1>Kanban des Tâches</h1>
-    <a href="task_create.php?project_id=<?= $projectId ?>" class="btn btn-primary">+ Nouvelle Tâche</a>
+
+<div class="project-header" style="background: #1a1d27; border: 1px solid #2a2d3e; border-radius: 10px; padding: 1.5rem; margin-bottom: 2rem;">
+    <div class="flex-between" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <div>
+            <h1 style="margin: 0; color: #e2e8f0; font-size: 1.75rem;">Kanban des Tâches</h1>
+            <p style="margin: 0.25rem 0 0 0; color: #64748b; font-size: 0.9rem;">Avancement global pondéré selon la priorité des tâches</p>
+        </div>
+        <a href="task_create.php?project_id=<?= $projectId ?>" class="btn btn-primary" style="padding: 0.6rem 1.2rem; background: #7c6af7; color: #fff; border-radius: 6px; text-decoration: none; font-weight: 500;">+ Nouvelle Tâche</a>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 1rem;">
+        <div class="progress-bar-container" style="flex: 1; background: #0f1117; height: 12px; border-radius: 6px; border: 1px solid #2a2d3e; overflow: hidden; position: relative;">
+            <div id="project-progress-bar" style="width: <?= $projectProgress ?>%; height: 100%; background: linear-gradient(90deg, #7c6af7, #10b981); transition: width 0.4s ease;"></div>
+        </div>
+        <span id="project-progress-text" style="color: #10b981; font-weight: bold; font-size: 1.1rem; min-width: 50px; text-align: right;">
+            <?= $projectProgress ?>%
+        </span>
+    </div>
 </div>
 
-<div class="kanban-board" style="display: flex; gap: 1rem; align-items: flex-start; margin-top: 1rem; user-select: none;">
+<div class="kanban-board" style="display: flex; gap: 1rem; align-items: flex-start; user-select: none;">
     <?php foreach($kanban as $status => $list): ?>
     
     <div class="kanban-column" 
@@ -158,11 +203,8 @@ function dropTask(e, column) {
     let currentProg = parseInt(card.getAttribute('data-current-progress')) || 0;
     let chosenProgress = null;
 
-    // Si déplacement vers "en cours", on demande le pourcentage à l'utilisateur
     if (newStatus === 'en cours') {
         let userInput = prompt("Entrez le pourcentage d'avancement (0 à 100) :", currentProg);
-        
-        // Si l'utilisateur clique sur "Annuler", on annule le déplacement
         if (userInput === null) return; 
         
         chosenProgress = parseInt(userInput);
@@ -172,12 +214,10 @@ function dropTask(e, column) {
         }
     }
 
-    // Déplacement visuel de la carte
     const container = column.querySelector('.cards-container');
     container.appendChild(card); 
     updateCounts();
 
-    // Préparation des données AJAX
     const formData = new FormData();
     formData.append('task_id', taskId);
     formData.append('status', newStatus);
@@ -185,7 +225,6 @@ function dropTask(e, column) {
         formData.append('progress', chosenProgress);
     }
 
-    // ATTENTION : J'utilise ici "tasks.php" conformément à ton URL fetch précédente
     fetch(`tasks.php?project_id=<?= $projectId ?>&ajax_update=1`, {
         method: 'POST',
         body: formData
@@ -199,7 +238,6 @@ function dropTask(e, column) {
             const badge = card.querySelector('.progress-badge');
             const newProg = data.new_progress;
             
-            // Mise à jour des attributs et styles de la carte
             card.setAttribute('data-current-progress', newProg);
             badge.textContent = newProg + '%';
             
@@ -209,6 +247,10 @@ function dropTask(e, column) {
             card.style.borderLeftColor = dynamicColor;
             badge.style.color = dynamicColor;
             badge.style.backgroundColor = dynamicColor + '20';
+
+            // Pour éviter un calcul JavaScript complexe après le drop,
+            // on rafraîchit proprement l'en-tête pour mettre à jour la barre globale calculée en PHP
+            window.location.reload();
         } else {
             alert("Erreur système : impossible de modifier la tâche en base de données.");
             window.location.reload();
