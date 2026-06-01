@@ -24,7 +24,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $isProf) {
 
         if ($title && $desc && $end) {
             try {
-                $stmt = $pdo->prepare("INSERT INTO projects (title, description, end_date, created_by) VALUES (?, ?, ?, ?)");
+                // 🎯 MODIFICATION ICI : On force le statut à 'en cours'
+                $stmt = $pdo->prepare("INSERT INTO projects (title, description, end_date, created_by, status) VALUES (?, ?, ?, ?, 'en cours')");
                 $stmt->execute([$title, $desc, $end, $userId]);
                 $success = "Nouveau projet créé avec succès !";
             } catch (PDOException $e) {
@@ -81,7 +82,7 @@ include 'includes/header.php';
 </div>
 <?php endif; ?>
 
-<h2><?= $isProf ? "Tous les projets en cours" : "Mes projets assignés" ?></h2>
+<h2><?= $isProf ? "Tous les projets" : "Mes projets assignés" ?></h2>
 
 <table class="data-table" style="margin-top: 15px;">
     <thead>

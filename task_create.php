@@ -2,7 +2,7 @@
 require_once 'includes/db.php';
 require_once 'includes/auth.php';
 requireLogin();
-requireRole(['team_leader', 'supervisor']);
+// Le requireRole restrictif a été retiré ici pour autoriser les élèves
 
 $projectId = $_GET['project_id'] ?? null;
 if (!$projectId) {

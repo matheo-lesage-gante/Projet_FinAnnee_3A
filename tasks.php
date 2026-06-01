@@ -22,9 +22,8 @@ include 'includes/header.php';
 ?>
 <div class="flex-between">
     <h1>Kanban des Tâches</h1>
-    <?php if(hasRole(['team_leader', 'supervisor'])): ?>
-        <a href="task_create.php?project_id=<?= $projectId ?>" class="btn btn-primary">+ Nouvelle Tâche</a>
-    <?php endif; ?>
+    <!-- Le bouton est maintenant accessible à tous les membres du projet -->
+    <a href="task_create.php?project_id=<?= $projectId ?>" class="btn btn-primary">+ Nouvelle Tâche</a>
 </div>
 
 <div class="kanban-board" style="display: flex; gap: 1rem; align-items: flex-start; margin-top: 1rem;">
