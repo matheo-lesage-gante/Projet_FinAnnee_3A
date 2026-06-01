@@ -13,15 +13,12 @@
             <div class="logo">EduProject</div>
             <nav>
                 <a href="dashboard.php">📊 Tableau de bord</a>
-                <a href="projects.php">📁 Projets</a>
+                <a href="projects.php">📁 Projets (Central)</a>
                 <a href="tasks.php">✅ Tâches</a>
                 <a href="deliverables.php">📤 Livrables</a>
-                 <a href="planning.php">📅 Planning</a> 
+                <a href="planning.php">📅 Planning</a> 
                 
-                <!-- MENU RÉSERVÉ AUX PROFESSEURS ('encadrant') -->
                 <?php if(hasRole('encadrant')): ?>
-                    <a href="group_create.php">➕ Créer un groupe</a>
-                    <a href="group_join.php">🔗 Rejoindre un groupe</a>
                     <a href="liste_utilisateurs.php">👥 Liste Utilisateurs</a>
                     <a href="evaluations.php">⭐ Évaluations</a>
                 <?php endif; ?>

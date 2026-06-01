@@ -2,7 +2,7 @@
 require_once 'includes/db.php';
 require_once 'includes/auth.php';
 
-// Réservé au prof uniquement
+// Réservé au prof uniquement zuu
 requireProf();
 
 try {
