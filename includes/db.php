@@ -18,7 +18,7 @@ try {
     // Retour des résultats en tableau associatif
     $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
 
-    echo "Connexion réussie !";
+    // L'echo a été supprimé ici pour ne pas bloquer les redirections (header)
 
 } catch (PDOException $e) {
     die("Erreur de connexion : " . $e->getMessage());
