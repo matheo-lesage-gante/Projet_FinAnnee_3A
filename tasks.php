@@ -6,6 +6,17 @@ requireLogin();
 $projectId = $_GET['project_id'] ?? null;
 if(!$projectId) die("Sélectionnez un projet d'abord.");
 
+// --- ACTION : Créer une sous-catégorie ---
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_create_category'])) {
+    $catTitle = trim($_POST['category_title'] ?? '');
+    if (!empty($catTitle)) {
+        $stmt = $pdo->prepare("INSERT INTO categories (project_id, title) VALUES (?, ?)");
+        $stmt->execute([$projectId, $catTitle]);
+    }
+    header("Location: tasks.php?project_id=" . $projectId);
+    exit;
+}
+
 // --- TRAITEMENT AJAX : Mise à jour du statut lors du Drag & Drop ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['ajax_update'])) {
     header('Content-Type: application/json; charset=utf-8');
@@ -34,49 +45,81 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['ajax_update'])) {
         exit;
     }
     
-    echo json_encode(['success' => false, 'error' => 'Données invalides ou projet incorrect.']);
+    echo json_encode(['success' => false, 'error' => 'Données invalides.']);
     exit;
 }
 
-// --- Chargement initial des tâches ---
-$stmt = $pdo->prepare("SELECT t.*, u.first_name FROM tasks t LEFT JOIN users u ON t.assigned_to = u.id WHERE project_id = ?");
+// --- CHARGEMENT DES DONNÉES ---
+// 1. Récupérer toutes les catégories du projet
+$stmt = $pdo->prepare("SELECT * FROM categories WHERE project_id = ? ORDER BY id ASC");
+$stmt->execute([$projectId]);
+$categories = $stmt->fetchAll(PDO::FETCH_UNIQUE); // Indexé par l'ID de la catégorie
+
+// Ajouter une catégorie virtuelle "Sans catégorie" pour les tâches non assignées
+$categories[0] = ['id' => 0, 'project_id' => $projectId, 'title' => 'Tâches globales (Sans catégorie)'];
+
+// 2. Récupérer toutes les tâches
+$stmt = $pdo->prepare("SELECT t.*, u.first_name FROM tasks t LEFT JOIN users u ON t.assigned_to = u.id WHERE t.project_id = ?");
 $stmt->execute([$projectId]);
 $tasks = $stmt->fetchAll();
 
-// --- CALCUL DE L'AVANCEMENT PONDÉRÉ DU PROJET ---
-$totalWeights = 0;
-$weightedProgressSum = 0;
-$projectProgress = 0;
+// --- CALCULS DES AVANCEMENTS PONDÉRÉS (Task -> Catégorie -> Projet) ---
+$coefficients = ['haute' => 2.0, 'moyenne' => 1.5, 'basse' => 1.0];
 
-// Table de correspondance des coefficients selon ta priorité
-$coefficients = [
-    'haute'   => 2.0,
-    'moyenne' => 1.5,
-    'basse'   => 1.0
-];
+// Initialiser les compteurs par catégorie
+$catCalculations = [];
+foreach ($categories as $catId => $cat) {
+    $catCalculations[$catId] = ['sum_weighted' => 0, 'sum_coef' => 0, 'progress' => 0];
+}
 
+// Étape A : On calcule les totaux pour chaque catégorie
 foreach ($tasks as $t) {
-    // Nettoyage de la chaîne (minuscules et suppression des espaces superflus)
+    $catId = (int)($t['category_id'] ?? 0);
+    if (!isset($catCalculations[$catId])) {
+        $catId = 0; // Sécurité si la catégorie a été supprimée
+    }
+    
     $priority = mb_strtolower(trim($t['priority'] ?? 'basse'));
-    
-    // Si la priorité en BDD ne correspond pas, on applique le coef "basse" (1) par défaut
     $coef = $coefficients[$priority] ?? 1.0;
-    
     $taskProgress = max(0, min(100, (int)($t['progress'] ?? 0)));
     
-    // Cumul pour la formule de la moyenne pondérée
-    $weightedProgressSum += ($taskProgress * $coef);
-    $totalWeights += $coef;
+    $catCalculations[$catId]['sum_weighted'] += ($taskProgress * $coef);
+    $catCalculations[$catId]['sum_coef'] += $coef;
 }
 
-// Évite la division par zéro si le projet n'a aucune tâche
-if ($totalWeights > 0) {
-    $projectProgress = round($weightedProgressSum / $totalWeights);
+// Étape B : Calcul de la moyenne finale de chaque catégorie + Préparation global Projet
+$projectWeightedSum = 0;
+$projectTotalWeights = 0;
+
+foreach ($catCalculations as $catId => $data) {
+    if ($data['sum_coef'] > 0) {
+        $catCalculations[$catId]['progress'] = round($data['sum_weighted'] / $data['sum_coef']);
+        
+        // Le poids de la catégorie dans le projet dépend de la somme des priorités de ses tâches
+        $projectWeightedSum += ($catCalculations[$catId]['progress'] * $data['sum_coef']);
+        $projectTotalWeights += $data['sum_coef'];
+    }
 }
 
-// --- Organisation des tâches pour l'affichage du Kanban ---
+// Étape C : Calcul final du projet
+$projectProgress = 0;
+if ($projectTotalWeights > 0) {
+    $projectProgress = round($projectWeightedSum / $projectTotalWeights);
+}
+
+// --- FILTRE : Catégorie sélectionnée pour l'affichage du Kanban ---
+$currentCatFilter = isset($_GET['filter_category']) ? (int)$_GET['filter_category'] : null;
+
+// Organiser les tâches uniquement pour le Kanban visuel
 $kanban = ['à faire' => [], 'en cours' => [], 'terminé' => []];
 foreach($tasks as $t) {
+    $catId = (int)($t['category_id'] ?? 0);
+    
+    // Si on filtre par catégorie et que ça ne correspond pas, on ignore dans le Kanban
+    if ($currentCatFilter !== null && $catId !== $currentCatFilter) {
+        continue;
+    }
+    
     $status = $t['status'] ?: 'à faire';
     if (array_key_exists($status, $kanban)) {
         $kanban[$status][] = $t;
@@ -86,24 +129,67 @@ foreach($tasks as $t) {
 include 'includes/header.php';
 ?>
 
-<div class="project-header" style="background: #1a1d27; border: 1px solid #2a2d3e; border-radius: 10px; padding: 1.5rem; margin-bottom: 2rem;">
-    <div class="flex-between" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+<div class="project-header" style="background: #1a1d27; border: 1px solid #2a2d3e; border-radius: 10px; padding: 1.5rem; margin-bottom: 1.5rem;">
+    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem;">
         <div>
-            <h1 style="margin: 0; color: #e2e8f0; font-size: 1.75rem;">Kanban des Tâches</h1>
-            <p style="margin: 0.25rem 0 0 0; color: #64748b; font-size: 0.9rem;">Avancement global pondéré selon la priorité des tâches</p>
+            <h1 style="margin: 0; color: #e2e8f0; font-size: 1.75rem;">Tableau de Bord & Kanban</h1>
+            <p style="margin: 0.25rem 0 0 0; color: #64748b; font-size: 0.9rem;">Avancement global (Moyenne des sous-catégories pondérées)</p>
         </div>
-        <a href="task_create.php?project_id=<?= $projectId ?>" class="btn btn-primary" style="padding: 0.6rem 1.2rem; background: #7c6af7; color: #fff; border-radius: 6px; text-decoration: none; font-weight: 500;">+ Nouvelle Tâche</a>
+        
+        <div style="display: flex; gap: 1rem;">
+            <form method="POST" style="background: #0f1117; padding: 0.5rem; border: 1px solid #2a2d3e; border-radius: 6px; display: flex; gap: 0.5rem;">
+                <input type="text" name="category_title" placeholder="Nouvelle sous-catégorie..." required style="background: transparent; border: none; color: #e2e8f0; outline: none; font-size: 0.85rem; padding: 0 0.5rem;">
+                <button type="submit" name="action_create_category" style="background: #7c6af7; border: none; color: white; padding: 0.3rem 0.7rem; border-radius: 4px; cursor: pointer; font-size: 0.85rem;">+</button>
+            </form>
+            <a href="task_create.php?project_id=<?= $projectId ?>" class="btn btn-primary" style="padding: 0.6rem 1.2rem; background: #10b981; color: #fff; border-radius: 6px; text-decoration: none; font-weight: 500; font-size: 0.9rem;">+ Nouvelle Tâche</a>
+        </div>
     </div>
 
     <div style="display: flex; align-items: center; gap: 1rem;">
-        <div class="progress-bar-container" style="flex: 1; background: #0f1117; height: 12px; border-radius: 6px; border: 1px solid #2a2d3e; overflow: hidden; position: relative;">
-            <div id="project-progress-bar" style="width: <?= $projectProgress ?>%; height: 100%; background: linear-gradient(90deg, #7c6af7, #10b981); transition: width 0.4s ease;"></div>
+        <span style="color: #e2e8f0; font-weight: 600; font-size: 0.9rem; min-width: 110px;">GLOBAL PROJET :</span>
+        <div style="flex: 1; background: #0f1117; height: 16px; border-radius: 8px; border: 1px solid #2a2d3e; overflow: hidden;">
+            <div style="width: <?= $projectProgress ?>%; height: 100%; background: linear-gradient(90deg, #7c6af7, #10b981); transition: width 0.4s;"></div>
         </div>
-        <span id="project-progress-text" style="color: #10b981; font-weight: bold; font-size: 1.1rem; min-width: 50px; text-align: right;">
-            <?= $projectProgress ?>%
-        </span>
+        <span style="color: #10b981; font-weight: bold; font-size: 1.2rem; min-width: 45px; text-align: right;"><?= $projectProgress ?>%</span>
     </div>
 </div>
+
+<div style="background: #1a1d27; border: 1px solid #2a2d3e; border-radius: 10px; padding: 1.2rem; margin-bottom: 2rem;">
+    <h3 style="color: #e2e8f0; margin-top: 0; margin-bottom: 1rem; font-size: 1rem;">📊 Avancement des Sous-Catégories</h3>
+    <div style="display: flex; flex-direction: column; gap: 0.8rem;">
+        
+        <div style="display: flex; align-items: center; gap: 1rem; padding: 0.4rem; border-radius: 6px; background: <?= $currentCatFilter === null ? '#222634' : 'transparent' ?>;">
+            <a href="tasks.php?project_id=<?= $projectId ?>" style="color: #e2e8f0; text-decoration: none; font-size: 0.85rem; min-width: 250px; font-weight: <?= $currentCatFilter === null ? 'bold' : 'normal' ?>;">
+                📂 [VOIR TOUTES LES CATÉGORIES]
+            </a>
+            <div style="flex: 1;"></div>
+        </div>
+
+        <?php foreach ($categories as $catId => $cat): 
+            // Ignorer l'affichage de la catégorie "Sans catégorie" si elle n'a aucune tâche associée
+            if ($catId === 0 && $catCalculations[0]['sum_coef'] == 0) continue;
+            
+            $catProg = $catCalculations[$catId]['progress'];
+            $isFiltered = ($currentCatFilter === $catId);
+        ?>
+            <div style="display: flex; align-items: center; gap: 1rem; padding: 0.5rem; border-radius: 6px; background: <?= $isFiltered ? '#222634' : 'transparent' ?>; border: 1px solid <?= $isFiltered ? '#7c6af7' : 'transparent' ?>;">
+                <a href="tasks.php?project_id=<?= $projectId ?>&filter_category=<?= $catId ?>" style="color: #e2e8f0; text-decoration: none; font-size: 0.85rem; min-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="Filtrer le Kanban">
+                    📁 <?= htmlspecialchars($cat['title']) ?> 
+                    <span style="font-size: 0.75rem; color: #64748b;">(<?= $isFiltered ? 'Filtré' : 'Cliquez pour filtrer' ?>)</span>
+                </a>
+                
+                <div style="flex: 1; background: #0f1117; height: 8px; border-radius: 4px; overflow: hidden;">
+                    <div style="width: <?= $catProg ?>%; height: 100%; background: #7c6af7;"></div>
+                </div>
+                <span style="color: #e2e8f0; font-size: 0.85rem; font-weight: 600; min-width: 40px; text-align: right;"><?= $catProg ?>%</span>
+            </div>
+        <?php endforeach; ?>
+    </div>
+</div>
+
+<h2 style="color: #e2e8f0; font-size: 1.2rem; margin-bottom: 1rem;">
+    📋 Kanban : <?= $currentCatFilter !== null ? htmlspecialchars($categories[$currentCatFilter]['title']) : 'Toutes les catégories' ?>
+</h2>
 
 <div class="kanban-board" style="display: flex; gap: 1rem; align-items: flex-start; user-select: none;">
     <?php foreach($kanban as $status => $list): ?>
@@ -126,6 +212,7 @@ include 'includes/header.php';
                 $prog = max(0, min(100, (int)($task['progress'] ?? 0)));
                 $hue = ($prog / 100) * 120;
                 $dynamicColor = "hsl($hue, 75%, 45%)";
+                $taskCatTitle = $categories[(int)($task['category_id'] ?? 0)]['title'] ?? 'Globale';
             ?>
             <div class="kanban-card" 
                  id="task-<?= $task['id'] ?>"
@@ -140,6 +227,13 @@ include 'includes/header.php';
                     <?= $prog ?>%
                 </span>
                 <h4 style="margin: 0 3rem 0 0; font-size: .95rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis;"><?= htmlspecialchars($task['title']) ?></h4>
+                
+                <?php if($currentCatFilter === null): ?>
+                    <span style="display:inline-block; margin-top: 0.4rem; font-size: 0.7rem; background: #2a2d3e; color: #cbd5e1; padding: 1px 5px; border-radius: 4px;">
+                        📁 <?= htmlspecialchars($taskCatTitle) ?>
+                    </span>
+                <?php endif; ?>
+
                 <p style="margin: .5rem 0 .25rem 0; font-size: .8rem; color: #64748b;">Priorité : <span style="color: #e2e8f0;"><?= htmlspecialchars($task['priority'] ?? 'Non définie') ?></span></p>
                 <p style="margin: 0 0 .5rem 0; font-size: .8rem; color: #64748b;">Assigné à : <span style="color: #e2e8f0;"><?= htmlspecialchars($task['first_name'] ?? 'Non assigné') ?></span></p>
                 
@@ -168,19 +262,9 @@ function dragEnd(e) {
     document.querySelectorAll('.kanban-column').forEach(unhighlightColumn);
 }
 
-function allowDrop(e) {
-    e.preventDefault();
-}
-
-function highlightColumn(column) {
-    column.style.background = "#222634";
-    column.style.borderColor = "#7c6af7";
-}
-
-function unhighlightColumn(column) {
-    column.style.background = "#1a1d27";
-    column.style.borderColor = "#2a2d3e";
-}
+function allowDrop(e) { e.preventDefault(); }
+function highlightColumn(column) { column.style.background = "#222634"; column.style.borderColor = "#7c6af7"; }
+function unhighlightColumn(column) { column.style.background = "#1a1d27"; column.style.borderColor = "#2a2d3e"; }
 
 function updateCounts() {
     document.querySelectorAll('.kanban-column').forEach(col => {
@@ -195,7 +279,6 @@ function dropTask(e, column) {
     
     const cardId = e.dataTransfer.getData("text/plain");
     const card = document.getElementById(cardId);
-    
     if (!card) return;
     
     const taskId = card.getAttribute('data-task-id');
@@ -230,35 +313,19 @@ function dropTask(e, column) {
         body: formData
     })
     .then(response => {
-        if (!response.ok) throw new Error('Erreur de communication serveur');
+        if (!response.ok) throw new Error('Erreur serveur');
         return response.json();
     })
     .then(data => {
         if(data.success) {
-            const badge = card.querySelector('.progress-badge');
-            const newProg = data.new_progress;
-            
-            card.setAttribute('data-current-progress', newProg);
-            badge.textContent = newProg + '%';
-            
-            const hue = (newProg / 100) * 120;
-            const dynamicColor = `hsl(${hue}, 75%, 45%)`;
-            
-            card.style.borderLeftColor = dynamicColor;
-            badge.style.color = dynamicColor;
-            badge.style.backgroundColor = dynamicColor + '20';
-
-            // Pour éviter un calcul JavaScript complexe après le drop,
-            // on rafraîchit proprement l'en-tête pour mettre à jour la barre globale calculée en PHP
-            window.location.reload();
+            window.location.reload(); // Rechargement nécessaire pour recalculer la cascade des moyennes en PHP
         } else {
-            alert("Erreur système : impossible de modifier la tâche en base de données.");
+            alert("Erreur système.");
             window.location.reload();
         }
     })
     .catch(error => {
-        console.error("Erreur AJAX :", error);
-        alert("Connexion perdue avec le serveur. Rechargement de la page...");
+        console.error("Erreur:", error);
         window.location.reload();
     });
 }

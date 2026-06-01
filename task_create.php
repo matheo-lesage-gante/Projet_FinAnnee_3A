@@ -9,7 +9,12 @@ if (!$projectId) {
     die("Sélectionnez un projet d'abord.");
 }
 
-// --- NOUVEAU : Récupération des membres du projet pour le select ---
+// --- NOUVEAU : Récupération des sous-catégories du projet ---
+$stmtCat = $pdo->prepare("SELECT id, title FROM categories WHERE project_id = ? ORDER BY id ASC");
+$stmtCat->execute([$projectId]);
+$categories = $stmtCat->fetchAll(PDO::FETCH_ASSOC);
+
+// --- Récupération des membres du projet pour le select ---
 $stmt = $pdo->prepare("
     SELECT u.id, u.first_name, u.last_name
     FROM project_members pm
@@ -26,19 +31,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $priority = $_POST['priority'];
     $startDate = $_POST['start_date'] ?? null;
     $endDate = $_POST['end_date'] ?? null;
-    $assignedTo = $_POST['assigned_to'] ?? null; // Récupération de l'ID de la personne assignée
+    $assignedTo = $_POST['assigned_to'] ?? null; 
+    $categoryId = $_POST['category_id'] ?? null; // Récupération de la sous-catégorie
 
     // Sécurité sur les dates
     if ($startDate && $endDate && $startDate > $endDate) {
         $error = "La date de début doit être antérieure à la date de fin.";
     } else {
-        // Insertion en base de données avec le champ assigned_to (on met NULL si personne n'est choisi)
+        // Insertion en base de données avec le champ assigned_to et category_id (on met NULL si vide)
         $stmt = $pdo->prepare("
-            INSERT INTO tasks (project_id, title, priority, created_by, status, start_date, end_date, assigned_to) 
-            VALUES (?, ?, ?, ?, 'à faire', ?, ?, ?)
+            INSERT INTO tasks (project_id, category_id, title, priority, created_by, status, start_date, end_date, assigned_to) 
+            VALUES (?, ?, ?, ?, ?, 'à faire', ?, ?, ?)
         ");
         $stmt->execute([
             $projectId, 
+            $categoryId ?: null, // Enregistre l'ID de la sous-catégorie ou NULL
             $title, 
             $priority, 
             $_SESSION['user_id'], 
@@ -69,6 +76,18 @@ include 'includes/header.php';
     </div>
 
     <div class="form-group" style="margin-bottom: 1rem;">
+        <label style="display:block; margin-bottom:.5rem;">Sous-catégorie / Jalon</label>
+        <select name="category_id" style="width:100%; padding:.45rem;">
+            <option value="">— Aucune (Tâche globale) —</option>
+            <?php foreach ($categories as $cat): ?>
+                <option value="<?= $cat['id'] ?>">
+                    📁 <?= htmlspecialchars($cat['title']) ?>
+                </option>
+            <?php endforeach; ?>
+        </select>
+    </div>
+
+    <div class="form-group" style="margin-bottom: 1rem;">
         <label style="display:block; margin-bottom:.5rem;">Priorité</label>
         <select name="priority" style="width:100%; padding:.45rem;">
             <option value="basse">Basse</option>
@@ -77,7 +96,6 @@ include 'includes/header.php';
         </select>
     </div>
 
-    <!-- NOUVEAU : Sélection du membre assigné -->
     <div class="form-group" style="margin-bottom: 1rem;">
         <label style="display:block; margin-bottom:.5rem;">Assigner à</label>
         <select name="assigned_to" style="width:100%; padding:.45rem;">
