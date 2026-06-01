@@ -11,7 +11,13 @@ $stmt->execute([$projectId]);
 $tasks = $stmt->fetchAll();
 
 $kanban = ['à faire' => [], 'en cours' => [], 'terminé' => []];
-foreach($tasks as $t) $kanban[$t['status']][] = $t;
+foreach($tasks as $t) {
+    // AJUSTEMENT : On gère un fallback si le statut est vide suite à un ajout depuis Gantt
+    $status = $t['status'] ?: 'à faire';
+    if (array_key_exists($status, $kanban)) {
+        $kanban[$status][] = $t;
+    }
+}
 
 include 'includes/header.php';
 ?>
@@ -29,8 +35,11 @@ include 'includes/header.php';
         <?php foreach($list as $task): ?>
         <div class="kanban-card">
             <h4><?= htmlspecialchars($task['title']) ?></h4>
-            <p>Priorité : <?= $task['priority'] ?></p>
-            <p>Assigné à : <?= $task['first_name'] ?? 'Non assigné' ?></p>
+            <p>Priorité : <?= htmlspecialchars($task['priority'] ?? 'Non définie') ?></p>
+            <p>Assigné à : <?= htmlspecialchars($task['first_name'] ?? 'Non assigné') ?></p>
+            <?php if($task['start_date'] && $task['end_date']): ?>
+                <small style="color:#64748b;">📅 <?= date('d/m', strtotime($task['start_date'])) ?> au <?= date('d/m', strtotime($task['end_date'])) ?></small>
+            <?php endif; ?>
         </div>
         <?php endforeach; ?>
     </div>
