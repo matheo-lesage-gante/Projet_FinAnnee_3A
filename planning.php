@@ -15,7 +15,6 @@ $projects = $pdo->query("SELECT id, title FROM projects ORDER BY title")->fetchA
 
 $tasks = [];
 if ($project_id) {
-    // AJUSTEMENT : On tape dans la table 'tasks' et on renomme 'title' en 'label' pour le JS
     $stmt = $pdo->prepare("
         SELECT t.*, t.title AS label, u.first_name, u.last_name
         FROM tasks t
@@ -27,46 +26,45 @@ if ($project_id) {
     $tasks = $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
-// --- Traitement du formulaire (ajout / modification) ---
+// --- Traitement du formulaire (Modification uniquement / Suppression) ---
 $error   = '';
 $success = '';
 $edit_task = null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $action     = $_POST['action']      ?? '';
-    $task_id    = (int)($_POST['task_id']   ?? 0);
-    $proj_id    = (int)($_POST['project_id'] ?? 0);
-    $label      = trim($_POST['label']      ?? ''); // Sera enregistré dans 'title'
-    $start      = $_POST['start_date']      ?? null;
-    $end        = $_POST['end_date']        ?? null;
-    $progress   = (int)($_POST['progress']  ?? 0);
-    $color      = $_POST['color']           ?? '#4f8ef7';
-    $assigned   = $_POST['assigned_to']     ?? null;
-    $parent_id  = $_POST['parent_id'] ? (int)$_POST['parent_id'] : null;
+    $action    = $_POST['action']      ?? '';
+    $task_id   = (int)($_POST['task_id']   ?? 0);
+    $proj_id   = (int)($_POST['project_id'] ?? 0);
+    $label     = trim($_POST['label']      ?? ''); 
+    $start     = $_POST['start_date']      ?? null;
+    $end       = $_POST['end_date']        ?? null;
+    $progress  = (int)($_POST['progress']  ?? 0);
+    $assigned  = $_POST['assigned_to']     ?? null;
+    $parent_id = $_POST['parent_id'] ? (int)$_POST['parent_id'] : null;
 
     if ($action === 'delete' && $task_id) {
-        // AJUSTEMENT : Table 'tasks'
         $pdo->prepare("DELETE FROM tasks WHERE id = ?")->execute([$task_id]);
         $success = 'Tâche supprimée.';
-    } elseif ($label) {
+    } elseif ($label && $action === 'edit' && $task_id) {
         if ($start && $end && $start > $end) {
             $error = 'La date de début doit être antérieure à la date de fin.';
-        } elseif ($action === 'edit' && $task_id) {
-            // AJUSTEMENT : Table 'tasks' et colonnes unifiées
-            $pdo->prepare("UPDATE tasks SET title=?, start_date=?, end_date=?, progress=?, color=?, assigned_to=?, parent_id=? WHERE id=?")
-                ->execute([$label, $start ?: null, $end ?: null, $progress, $color, $assigned ?: null, $parent_id, $task_id]);
-            $success = 'Tâche mise à jour.';
         } else {
-            // AJUSTEMENT : Table 'tasks' et colonnes unifiées
-            $pdo->prepare("INSERT INTO tasks (project_id, title, start_date, end_date, progress, color, assigned_to, parent_id, status) VALUES (?,?,?,?,?,?,?,?,'à faire')")
-                ->execute([$proj_id, $label, $start ?: null, $end ?: null, $progress, $color, $assigned ?: null, $parent_id]);
-            $success = 'Tâche ajoutée.';
+            // --- AJUSTEMENT DYNAMIQUE DU STATUT SELON L'AVANCEMENT ---
+            $status = 'en cours';
+            if ($progress === 0) {
+                $status = 'à faire';
+            } elseif ($progress === 100) {
+                $status = 'terminé';
+            }
+
+            // Mise à jour incluant le calcul automatique du champ status
+            $pdo->prepare("UPDATE tasks SET title=?, start_date=?, end_date=?, progress=?, status=?, assigned_to=?, parent_id=? WHERE id=?")
+                ->execute([$label, $start ?: null, $end ?: null, $progress, $status, $assigned ?: null, $parent_id, $task_id]);
+            $success = 'Tâche mise à jour.';
         }
-    } else {
-        $error = 'Veuillez remplir tous les champs obligatoires.';
     }
 
-    if ($proj_id) {
+    if ($proj_id && empty($error)) {
         header("Location: planning.php?project_id=$proj_id");
         exit;
     }
@@ -74,7 +72,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // Édition d'une tâche existante
 if (isset($_GET['edit']) && $project_id) {
-    // AJUSTEMENT : Table 'tasks'
     $stmt = $pdo->prepare("SELECT *, title AS label FROM tasks WHERE id = ? AND project_id = ?");
     $stmt->execute([(int)$_GET['edit'], $project_id]);
     $edit_task = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -97,7 +94,6 @@ include 'includes/header.php';
 ?>
 
 <style>
-/* ... Ton CSS d'origine ... */
 :root {
     --gantt-bg:       #0f1117;
     --gantt-surface:  #1a1d27;
@@ -118,8 +114,6 @@ include 'includes/header.php';
 .select-project { padding: .45rem .9rem; border-radius: var(--radius); border: 1px solid var(--gantt-border); background: var(--gantt-surface); color: var(--gantt-text); font-size: .9rem; cursor: pointer; }
 .btn-primary { padding: .45rem 1.1rem; border-radius: var(--radius); border: none; background: var(--gantt-accent); color: #fff; font-weight: 600; cursor: pointer; font-size: .88rem; transition: opacity .15s; }
 .btn-primary:hover { opacity: .85; }
-.btn-danger  { background: #e05c5c; }
-.btn-sm      { padding: .3rem .7rem; font-size: .8rem; }
 .gantt-outer { background: var(--gantt-surface); border: 1px solid var(--gantt-border); border-radius: var(--radius); overflow: hidden; }
 .gantt-scroll { overflow-x: auto; }
 .gantt-grid { display: grid; }
@@ -153,8 +147,8 @@ include 'includes/header.php';
 .empty-state .icon { font-size: 3rem; margin-bottom: .5rem; }
 .alert { padding: .7rem 1rem; border-radius: var(--radius); margin-bottom: 1rem; font-size: .88rem; }
 .alert-success { background: rgba(79,209,197,.12); border: 1px solid rgba(79,209,197,.3); color: var(--gantt-accent2); }
-.alert-error   { background: rgba(224,92,92,.12);  border: 1px solid rgba(224,92,92,.3);  color: #e05c5c; }
-.progress-pill { font-size: .7rem; background: rgba(124,106,247,.2); color: var(--gantt-accent); border-radius: 20px; padding: 1px 7px; white-space: nowrap; }
+.alert-error    { background: rgba(224,92,92,.12);  border: 1px solid rgba(224,92,92,.3);  color: #e05c5c; }
+.progress-pill { font-size: .7rem; border-radius: 20px; padding: 2px 8px; white-space: nowrap; font-weight: bold; }
 .task-actions { display: flex; gap: .35rem; margin-left: auto; }
 .task-actions a, .task-actions button { background: none; border: 1px solid var(--gantt-border); border-radius: 5px; color: var(--gantt-muted); cursor: pointer; font-size: .8rem; padding: 2px 6px; text-decoration: none; transition: color .15s, border-color .15s; }
 .task-actions a:hover { color: var(--gantt-accent); border-color: var(--gantt-accent); }
@@ -177,9 +171,6 @@ include 'includes/header.php';
             <?php endforeach; ?>
         </select>
     </form>
-    <?php if ($project_id): ?>
-        <a href="?project_id=<?= $project_id ?>#add-form" class="btn-primary">+ Ajouter une tâche</a>
-    <?php endif; ?>
 </div>
 
 <?php if ($success): ?>
@@ -193,14 +184,14 @@ include 'includes/header.php';
     <div class="gantt-outer">
         <div class="empty-state">
             <div class="icon">📁</div>
-            <p>Sélectionnez un projet pour afficher ou créer son planning.</p>
+            <p>Sélectionnez un projet pour afficher son planning.</p>
         </div>
     </div>
 <?php elseif (empty($tasks)): ?>
     <div class="gantt-outer">
         <div class="empty-state">
             <div class="icon">🗓️</div>
-            <p>Aucune tâche pour ce projet. <a href="#add-form" style="color:var(--gantt-accent)">Ajoutez la première tâche.</a></p>
+            <p>Aucune tâche pour ce projet. Créez vos tâches depuis le tableau principal.</p>
         </div>
     </div>
 <?php else: ?>
@@ -220,7 +211,6 @@ include 'includes/header.php';
 </div>
 
 <script>
-// Filtrage en JS des tâches qui possèdent des dates valides pour éviter le crash du Gantt
 const ALL_TASKS = <?= json_encode(array_values($tasks)) ?>;
 const TASKS = ALL_TASKS.filter(t => t.start_date && t.end_date);
 const TODAY = new Date(); TODAY.setHours(0,0,0,0);
@@ -229,6 +219,11 @@ let DAY_W = 32;
 
 function dateDiff(a, b) { return Math.round((b - a) / 86400000); }
 function parseDate(s) { const [y,m,d] = s.split('-').map(Number); return new Date(y, m-1, d); }
+
+function getProgressColor(prog) {
+    const hue = (prog / 100) * 120;
+    return `hsl(${hue}, 75%, 45%)`;
+}
 
 function render() {
     const container = document.getElementById('gantt-inner');
@@ -274,15 +269,16 @@ function render() {
         const dur    = dateDiff(start, end) + 1;
         const left   = LABEL_W + dateDiff(minDate, start) * DAY_W;
         const width  = dur * DAY_W;
-        const color  = task.color || '#7c6af7';
         const prog   = Math.max(0, Math.min(100, parseInt(task.progress) || 0));
+        
+        const dynamicColor = getProgressColor(prog);
 
         html += `<div class="gantt-task-row" style="display:flex;">
             <div class="gantt-label-cell" style="width:${LABEL_W}px;min-width:${LABEL_W}px;position:sticky;left:0;z-index:2;">
                 <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">${escHtml(task.label)}</span>
-                <span class="progress-pill">${prog}%</span>
+                <span class="progress-pill" style="background:${dynamicColor}20; color:${dynamicColor};">${prog}%</span>
                 <div class="task-actions">
-                    <a href="?project_id=<?= $project_id ?>&edit=${task.id}#add-form" title="Modifier">✏️</a>
+                    <a href="?project_id=<?= $project_id ?>&edit=${task.id}#edit-form" title="Modifier">✏️</a>
                     <form method="post" style="margin:0;" onsubmit="return confirm('Supprimer cette tâche ?')">
                         <input type="hidden" name="project_id" value="<?= $project_id ?>">
                         <input type="hidden" name="action"     value="delete">
@@ -292,7 +288,7 @@ function render() {
                 </div>
             </div>
             <div class="gantt-bar-area" style="flex:1;position:relative;">
-                <div class="gantt-bar" style="left:${left - LABEL_W}px;width:${width}px;background:${color};" title="${escHtml(task.label)} — ${task.start_date} → ${task.end_date} (${prog}%)">
+                <div class="gantt-bar" style="left:${left - LABEL_W}px;width:${width}px;background:${dynamicColor};" title="${escHtml(task.label)} — ${task.start_date} → ${task.end_date} (${prog}%)">
                     <div class="gantt-bar-fill" style="width:${prog}%;"></div>
                     <span class="gantt-bar-label">${escHtml(task.label)}</span>
                 </div>
@@ -317,36 +313,30 @@ render();
 </script>
 <?php endif; ?>
 
-<?php if ($project_id): ?>
-<div class="form-card" id="add-form">
-    <h2><?= $edit_task ? '✏️ Modifier la tâche' : '+ Nouvelle tâche' ?></h2>
+<?php if ($project_id && $edit_task): ?>
+<div class="form-card" id="edit-form">
+    <h2>✏️ Modifier la tâche : <?= htmlspecialchars($edit_task['label']) ?></h2>
     <form method="post">
         <input type="hidden" name="project_id" value="<?= $project_id ?>">
-        <input type="hidden" name="action"     value="<?= $edit_task ? 'edit' : 'add' ?>">
-        <?php if ($edit_task): ?>
-            <input type="hidden" name="task_id" value="<?= $edit_task['id'] ?>">
-        <?php endif; ?>
+        <input type="hidden" name="action"     value="edit">
+        <input type="hidden" name="task_id"    value="<?= $edit_task['id'] ?>">
 
         <div class="form-grid">
             <div class="form-group" style="grid-column:1/-1;">
                 <label>Nom de la tâche *</label>
-                <input type="text" name="label" required maxlength="120" value="<?= htmlspecialchars($edit_task['label'] ?? '') ?>" placeholder="Ex : Rédaction du rapport…">
+                <input type="text" name="label" required maxlength="120" value="<?= htmlspecialchars($edit_task['label'] ?? '') ?>">
             </div>
             <div class="form-group">
                 <label>Date de début</label>
-                <input type="date" name="start_date" value="<?= $edit_task['start_date'] ?? date('Y-m-d') ?>">
+                <input type="date" name="start_date" value="<?= $edit_task['start_date'] ?>">
             </div>
             <div class="form-group">
                 <label>Date de fin</label>
-                <input type="date" name="end_date" value="<?= $edit_task['end_date'] ?? date('Y-m-d', strtotime('+7 days')) ?>">
+                <input type="date" name="end_date" value="<?= $edit_task['end_date'] ?>">
             </div>
             <div class="form-group">
                 <label>Avancement (<?= $edit_task['progress'] ?? 0 ?>%)</label>
                 <input type="range" name="progress" min="0" max="100" value="<?= $edit_task['progress'] ?? 0 ?>" oninput="this.previousElementSibling.textContent='Avancement ('+this.value+'%)'">
-            </div>
-            <div class="form-group">
-                <label>Couleur</label>
-                <input type="color" name="color" value="<?= $edit_task['color'] ?? '#7c6af7' ?>" style="height:38px;padding:2px 4px;cursor:pointer;">
             </div>
             <?php if (!empty($members)): ?>
             <div class="form-group">
@@ -367,7 +357,7 @@ render();
                 <select name="parent_id">
                     <option value="">— Aucune —</option>
                     <?php foreach ($tasks as $t): ?>
-                        <?php if (!$edit_task || $t['id'] != $edit_task['id']): ?>
+                        <?php if ($t['id'] != $edit_task['id']): ?>
                         <option value="<?= $t['id'] ?>" <?= ($edit_task['parent_id'] ?? null) == $t['id'] ? 'selected' : '' ?>>
                             <?= htmlspecialchars($t['label']) ?>
                         </option>
@@ -379,15 +369,12 @@ render();
         </div>
 
         <div class="form-actions">
-            <button type="submit" class="btn-primary">
-                <?= $edit_task ? '💾 Enregistrer' : '✅ Ajouter la tâche' ?>
-            </button>
-            <?php if ($edit_task): ?>
-                <a href="?project_id=<?= $project_id ?>" class="btn-primary" style="background:var(--gantt-muted);text-decoration:none;">Annuler</a>
-            <?php endif; ?>
+            <button type="submit" class="btn-primary">💾 Enregistrer les modifications</button>
+            <a href="planning.php?project_id=<?= $project_id ?>" class="btn-primary" style="background:var(--gantt-muted);text-decoration:none;">Annuler</a>
         </div>
     </form>
 </div>
 <?php endif; ?>
 
 </div>
+<?php include 'includes/footer.php'; ?>
