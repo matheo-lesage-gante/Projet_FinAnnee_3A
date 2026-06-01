@@ -17,9 +17,11 @@ function hasRole($roles) {
     return in_array($_SESSION['role'], (array)$roles);
 }
 
-function requireRole($roles) {
-    if (!hasRole($roles)) {
-        die("Accès refusé. Vous n'avez pas les permissions nécessaires.");
+// On vérifie si c'est un 'encadrant' (notre professeur)
+function requireProf() {
+    requireLogin();
+    if ($_SESSION['role'] !== 'encadrant') {
+        die("Accès refusé. Cette action est réservée uniquement aux professeurs.");
     }
 }
 ?>
