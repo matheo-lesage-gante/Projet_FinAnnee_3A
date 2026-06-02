@@ -215,10 +215,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <label>Mot de passe</label>
                 <input type="password" name="password" placeholder="••••••••" required>
             </div>
-            <div class="btn-group">
-                <button type="submit" class="btn btn-primary">Se connecter</button>
-                <a href="inscription.php" class="btn btn-secondary">Créer un compte</a>
-            </div>
         </form>
     </div>
 
